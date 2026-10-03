@@ -2,6 +2,14 @@
   "name": "dsh-stream-retry",
   "version": "0.1.0",
   "description": "Configurable stream error classification for DSH built-in request retry",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LMGateX/dsh-stream-retry.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LMGateX/dsh-stream-retry/issues"
+  },
+  "homepage": "https://github.com/LMGateX/dsh-stream-retry#readme",
   "type": "module",
   "main": "./index.js",
   "types": "./index.d.ts",

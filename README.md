@@ -37,11 +37,21 @@
 
 这是 Host + Web client 的普通 bundle；[manifest](<package.json>) 声明 [组合 patch](<cordis.patch.yml>)，只挂载一个全局分类器。需要现有组合已启用官方 dsh-llm-retry（标准 base bundle 已声明它），且目标 provider 的 retryPolicy 允许 TRANSPORT。不要重复挂载另一个官方执行器。
 
-从目录安装（示例，**此开发过程未执行安装**）：
+从 GitHub 安装（任选一种，都会修改当前 profile）：
 
-    dsh plugin --profile web add /绝对路径/dsh-stream-retry
+    # ① 直接从 release 的安装包安装
+    dsh plugin --profile web add https://github.com/LMGateX/dsh-stream-retry/releases/download/v0.1.0/dsh-stream-retry-0.1.0.tgz
 
-也可在 DSH 插件管理器的添加插件操作中使用这个目录或打包的本地 tgz。CLI/插件管理器的安装会修改 profile；不要手工在本机安装目录或用户 profile 中复制代码。
+    # ② 或者克隆后按目录安装
+    git clone https://github.com/LMGateX/dsh-stream-retry.git
+    dsh plugin --profile web add ./dsh-stream-retry
+
+    # ③ 已开启 npm 发布后（见下）
+    dsh plugin --profile web add dsh-stream-retry
+
+也可在 DSH 插件管理器的“添加插件”中使用本地目录或 tgz。CLI/插件管理器的安装会修改 profile；不要手工把代码复制进本机安装目录或用户 profile。
+
+本包尚未发布到 npm registry（包名 dsh-stream-retry 目前可用）。若要以 ③ 的方式发布，需要维护者本机先 `npm login`，再执行 `npm publish --access public`；本仓库不包含任何 registry 凭证。
 
 安装后，在插件管理器进入本 bundle，找到 stream-retry 行的“配置 / Configure”入口，可编辑两个逐行列表。页面使用公开 plugins.row.config 和 configForms；只有 Host 服务已提供可编辑配置时才出现。没有另起 Web 服务器。
 
