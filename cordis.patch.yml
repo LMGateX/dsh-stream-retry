@@ -1,0 +1,4 @@
+# A single global classifier. Reuse the existing official llm-retry executor.
+- insert:
+    - id: stream-retry
+      name: dsh-stream-retry
