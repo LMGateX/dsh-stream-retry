@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": ".",
+    "rootDir": ".",
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": false
+  },
+  "include": [
+    "client/**/*.ts",
+    "types/**/*.d.ts"
+  ]
+}
