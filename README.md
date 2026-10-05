@@ -39,7 +39,7 @@
 
 从 GitHub Release 安装（推荐，唯一经过验证的分发方式）：
 
-    dsh plugin --profile web add https://github.com/LMGateX/dsh-stream-retry/releases/download/v0.1.3/dsh-stream-retry-0.1.3.tgz
+    dsh plugin --profile web add https://github.com/LMGateX/dsh-stream-retry/releases/download/v0.1.4/dsh-stream-retry-0.1.4.tgz
 
 或者克隆仓库后按目录安装：
 

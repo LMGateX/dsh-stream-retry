@@ -1,6 +1,6 @@
 {
   "name": "dsh-stream-retry",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Configurable stream error classification for DSH built-in request retry",
   "repository": {
     "type": "git",
@@ -43,7 +43,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.backend.json && tsc -p tsconfig.client.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
     "test": "npm run typecheck && npm run build && npm run test:unit",
     "test:unit": "node --test test/plugin.test.ts test/client.test.ts",
     "test:integration": "node --test test/integration.test.ts",

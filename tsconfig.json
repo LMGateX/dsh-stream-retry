@@ -25,7 +25,6 @@
   },
   "include": [
     "src/**/*.ts",
-    "client/**/*.ts",
     "test/**/*.ts",
     "test/**/*.d.ts",
     "types/**/*.d.ts"

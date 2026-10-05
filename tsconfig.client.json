@@ -3,11 +3,15 @@
   "compilerOptions": {
     "outDir": ".",
     "rootDir": ".",
+    // The browser half is injected as a classic script and concatenated with other
+    // bundles, so it must compile as a script: no ESM syntax, no `export {}` marker.
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "lib": [
       "ES2024",
       "DOM"
     ],
-    "declaration": false,
+    "declaration": true,
     "declarationMap": false,
     "noEmit": false,
     "target": "ES2024"

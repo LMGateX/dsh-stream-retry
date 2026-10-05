@@ -1,9 +1,13 @@
 /**
- * Settings-page protocol tests. They import the built browser bundle and drive its
- * exported editor against a mock of the public settings/slot services.
+ * Settings-page protocol tests. They load the built browser bundle the way the web
+ * shell does — as a classic script — and drive its exported editor against a mock
+ * of the public settings/slot services.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 import type { ConfigForm, ConfigFormSnapshot, PathOperation } from '../client/public.js';
 
 /** Minimal module-loader facade: capture the single registered factory. */
@@ -33,13 +37,25 @@ type EditorState = {
   dirty: boolean; saving: boolean; error: string; conflict: boolean;
 };
 
+/** The shipped browser bundle, read and executed the way the shell executes it. */
+const clientPath = fileURLToPath(new URL('../client/client.js', import.meta.url));
+const clientSource = readFileSync(clientPath, 'utf8');
+
 const registry: { entry?: LoadedClient } = {};
 Reflect.set(globalThis, 'window', {
   __ModuleLoader__: { load: (entry: LoadedClient) => { registry.entry = entry; } },
 });
-const bundle = (await import('../client/client.js')) as unknown as ClientApi;
+// The shell injects this bundle as a classic script and concatenates several bundles
+// into one combo response, so compiling it that way here fails the moment ESM syntax
+// creeps back in.
+new vm.Script(clientSource, { filename: clientPath }).runInThisContext();
 const entry = registry.entry;
 assert(entry, 'the bundle must register exactly one loader entry');
+
+test('browser bundle stays a concatenation-safe classic script', () => {
+  assert.match(clientSource, /^window\.__ModuleLoader__\.load\(\{$/m);
+  assert.doesNotMatch(clientSource, /^\s*(?:import|export)\s/m);
+});
 
 /** Load the client API with a stubbed React runtime. */
 function load(react?: Record<string, unknown>): { api: ClientApi; requested: string[] } {
