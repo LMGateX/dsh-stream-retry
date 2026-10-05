@@ -1,6 +1,6 @@
 # DSH Stream Retry — 可配置流中断重试兼容插件
 
-为 **DSH 0.2.0-rc.2** 的官方重试执行器补充上游错误分类。插件本身不启动第二套重试循环，不发“继续”消息，也不重建 agent。复用官方 dsh-llm-retry，在同一 turn / step 重试失败的模型请求。
+为 **DSH 0.2.0-rc.2 与 0.2.1-alpha.1** 的官方重试执行器补充上游错误分类。插件本身不启动第二套重试循环，不发“继续”消息，也不重建 agent。复用官方 dsh-llm-retry，在同一 turn / step 重试失败的模型请求。
 
 ## 默认预设与可编辑设置
 
@@ -39,7 +39,7 @@
 
 从 GitHub Release 安装（推荐，唯一经过验证的分发方式）：
 
-    dsh plugin --profile web add https://github.com/LMGateX/dsh-stream-retry/releases/download/v0.1.1/dsh-stream-retry-0.1.1.tgz
+    dsh plugin --profile web add https://github.com/LMGateX/dsh-stream-retry/releases/download/v0.1.2/dsh-stream-retry-0.1.2.tgz
 
 或者克隆仓库后按目录安装：
 
@@ -86,37 +86,52 @@ errorCodes 是完整列表，不是增量。重试次数、退避、是否重试
 
 ## 开发与验证
 
-[后端](<index.js>)、[匹配器](<matcher.js>)、[Web 配置页](<client.js>) 是可直接运行的 JavaScript，无构建或安装脚本；[类型声明](<index.d.ts>) 描述 public plugin 接口。应用层只依赖 Schemastery；DSH/Cordis peer 声明约束已经验证的宿主版本，不复制另一个 LLM 服务或重试执行器。
+源码是 **TypeScript**，运行产物由 tsc 生成，仓库里不存在手写的 .js 源码：
 
-安装依赖并运行检查与单元测试（不需要 DSH 运行时）：
+| 源码 | 产物 | 作用 |
+|---|---|---|
+| [src/index.ts](<src/index.ts>) | [lib/index.js](<lib/index.js>) + [lib/index.d.ts](<lib/index.d.ts>) | 插件主体：Config（Schemastery，两个 volatile 列表）与 llm/stream 分类器 |
+| [src/matcher.ts](<src/matcher.ts>) | lib/matcher.js | 纯匹配规则：结构化 code、两种外层格式、永久码 guard、重试码保留 |
+| [src/types.ts](<src/types.ts>) | lib/types.js | 共享的 volatile 配置引用类型 |
+| [client/client.ts](<client/client.ts>) | [client/client.js](<client/client.js>) | Web 配置页（工厂由 window.__ModuleLoader__.load 注册） |
+| [client/public.ts](<client/public.ts>) | client/public.js + client/public.d.ts | 浏览器平台的结构化契约：configForms / slots / React / loader facade |
+| [types/harness.d.ts](<types/harness.d.ts>) | 不发布 | 编译期声明 \`@deepseek-ai/cordis\`、\`@deepseek-ai/dsh-llm\` 的 peer 形状 |
+
+应用层只依赖 Schemastery；DSH/Cordis 是 peer 声明，不复制另一个 LLM 服务或重试执行器。\`dsh\` 字段声明 [组合 patch](<cordis.patch.yml>)，只挂载一个全局分类器。
 
     npm install --ignore-scripts
-    npm run check
-    npm run test:unit
+    npm run check          # tsc --noEmit：源码、测试、客户端一起类型检查
+    npm run build          # 生成 lib/ 与 client/ 的运行产物
+    npm run test:unit      # 后端行为 + 配置页协议（25 项，无需 DSH 运行时）
 
-集成测试需要一份已安装的 DSH 0.2.0-rc.2，并显式指定它的位置；包内没有任何硬编码机器路径：
+集成测试需要一份已安装的 DSH，并显式指定它的位置；包内没有任何硬编码机器路径：
 
     # 全局安装：指向包含 node_modules/@deepseek-ai/dsh 的目录
     DSH_RUNTIME_ROOT=/usr/local/lib npm run test:integration
 
-    # 或把本包安装进某个 profile 后，在能解析 @deepseek-ai/dsh 的目录直接运行
-    npm run test:integration
+    # 或指向另一份已安装的 DSH，例如 alpha 版本
+    DSH_RUNTIME_ROOT=/path/to/alpha-root npm run test:integration
 
 未设置 DSH_RUNTIME_ROOT 且无法解析到已安装的 DSH 时，集成测试会给出明确错误，而不是猜测本机路径。
 
-[后端行为测试](<test/plugin.test.mjs>) 从 public apply / Config 及 llm/stream 测试预设、字面边界、永久码、配置列表、取消、字段保留和卸载。
+兼容性不靠版本号猜测：本机安装的 **0.2.0-rc.2** 与隔离安装的 **0.2.1-alpha.1** 都跑通了同一套
+34 项真实 runtime 集成测试，覆盖 llm/stream 瀑布、agent/request-error、agent loop、官方 dsh-llm-retry
+与真实子 agent 服务。客户端半只用公开的 plugins.row.config 槽位、configForms.get/whileServed/mutate
+与平台 React；不导入任何 Harness Client 包，因此不随客户端内部重构而失效。
 
-[client 协议测试](<test/client.test.mjs>) 用公共 configForms/slots 模拟检查原子保存、revision 冲突、草稿、重置、卸载及两个可访问编辑器；不导入私有 Harness Client 包，只使用平台 React。
+测试文件（同样为 TypeScript，由 Node 24 直接运行）：
 
-[真实 runtime 集成测试](<test/integration.test.mjs>) 通过 [runtime helper](<test/runtime.mjs>) 挂载真正 Cordis/core/本产品/官方 retry，注入离线 mock adapter，不调用真实模型 API。验证 same-step 重试、partial 隔离、UNKNOWN/STREAM_CLOSED 实际 adapter throw、预算耗尽、事件驱动取消及 in-process 子 agent。持久测试只使用测试自建临时 JSONL，清理路径有 ownership 校验，不修改现有用户会话。
+- [test/plugin.test.ts](<test/plugin.test.ts>)：预设、字面边界、永久码、配置列表、取消、字段保留、卸载。
+- [test/client.test.ts](<test/client.test.ts>)：原子保存、revision 冲突、草稿、重置、卸载及两个可访问编辑器；用公共契约模拟，不依赖内部实现。
+- [test/integration.test.ts](<test/integration.test.ts>) + [test/runtime.ts](<test/runtime.ts>)：挂载真实 Cordis/core/本产品/官方 retry，注入离线 mock adapter，不调用真实模型 API。验证 same-step 重试、partial 隔离、UNKNOWN/STREAM_CLOSED 实际 adapter throw、预算耗尽、事件驱动取消及 in-process 子 agent。持久测试只使用测试自建临时 JSONL，清理路径有 ownership 校验，不修改现有用户会话。
 
-本机已执行 npm run check 和 npm test：**59/59 通过**，其中后端行为 13、client 公共协议模拟 12、真实 DSH 集成 34。主 agent 亲自重跑，退出码 0，stderr 为空。测试使用 1ms 退避以快速确定性验证，不改变生产退避；另用 60s 官方退避验证事件触发取消。
+本机执行 \`npm run test:unit\` 与两个 runtime 的 \`npm run test:integration\`：**93/93 通过**（单元与配置页 25、rc.2 集成 34、alpha 集成 34），测试使用 1ms 退避以快速确定性验证，不改变生产退避；另用 60s 官方退避验证事件触发取消。
 
-**验证限制：没有安装到当前 Web profile，没有实际浏览器操作或真实上游网络测试。** 配置页目前通过公共协议/组件模拟测试；必须安装后再确认实际入口、保存和视觉效果。临时离线 persistence 测试不等于崩溃后的自动恢复。
+**验证限制：配置页已在插件管理器中显示为运行中，但其浏览器交互与视觉效果仍需人工确认；没有真实上游网络故障的端到端复现。** 临时离线 persistence 测试不等于崩溃后的自动恢复。
 
 ## 官方接口依据
 
 - [插件 Config](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/config.md)
 - [官方重试插件](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm-retry/README.md)
 
-当前实现以本机 0.2.0-rc.2 的公开声明和运行测试为准；master 的接口可能变化，升级前应重新验证。许可证：[MIT](<LICENSE>)。
+当前实现以 0.2.0-rc.2 与 0.2.1-alpha.1 的公开声明和运行测试为准；master 的接口可能变化，升级前应重新验证。许可证：[MIT](<LICENSE>)。
