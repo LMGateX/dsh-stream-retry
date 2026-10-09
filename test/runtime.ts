@@ -52,6 +52,11 @@ export const runtimeVersion = (requireRuntime('./package.json') as { version: st
 export const load = async <T = Record<string, unknown>>(name: string): Promise<T> =>
   import(pathToFileURL(requireRuntime.resolve('@deepseek-ai/' + name)).href) as Promise<T>;
 
+/** Load a package an older DSH does not ship; undefined instead of a resolution error. */
+export const loadOptional = async <T = Record<string, unknown>>(name: string): Promise<T | undefined> => {
+  try { return await load<T>(name); } catch { return undefined; }
+};
+
 // Fail closed: no test path may contact a real provider.
 globalThis.fetch = (async () => { throw new Error('Integration tests forbid network fetch'); }) as typeof fetch;
 
@@ -174,7 +179,12 @@ export async function createRuntime({ config = {}, product = true, retry = true,
     }
     try {
       if (subagents && ctx.get('subagents')) {
-        await settle(() => ctx.subagents.drainContinuableDescendants(handles.map((handle) => handle.agent)));
+        if (typeof ctx.subagents.waitForChildren === 'function') {
+          // 0.2.1-alpha.2 joins (never cancels) each parent's descendants.
+          for (const handle of handles) await settle(() => ctx.subagents.waitForChildren(handle.agent));
+        } else {
+          await settle(() => ctx.subagents.drainContinuableDescendants(handles.map((handle) => handle.agent)));
+        }
       }
       for (const handle of [...handles].reverse()) await settle(() => handle.dispose());
       await settle(() => ctx.fiber.dispose());
@@ -206,6 +216,15 @@ export async function createRuntime({ config = {}, product = true, retry = true,
       await ctx.plugin(query.default, { path: ':memory:', openAt: 'never' }).await();
     }
     if (subagents) {
+      // 0.2.1-alpha.2 resolves every child through the Session working directory, so
+      // its subagent service stays parked until `fs` and working-directory exist.
+      // Runtimes without that package keep the exact earlier composition.
+      const workingDirectory = await loadOptional<any>('dsh-working-directory');
+      if (workingDirectory) {
+        const fsLocal = await loadOptional<any>('dsh-fs-local');
+        if (fsLocal) await ctx.plugin(fsLocal.default, {}).await();
+        await ctx.plugin(workingDirectory.default, {}).await();
+      }
       await ctx.plugin((await load<any>('dsh-subagent')).default, {}).await();
       await ctx.plugin(await load<any>('dsh-subagent-spawn-in-process'), {}).await();
       await ctx.plugin(await load<any>('dsh-subagent-fork-in-process'), {}).await();
@@ -241,6 +260,69 @@ export async function createRuntime({ config = {}, product = true, retry = true,
     await cleanup();
     throw error;
   }
+}
+
+/** One started child, shaped alike across the released and activation subagent APIs. */
+export interface ChildRun {
+  /** The child's durable session id. */
+  readonly childId: string;
+  /** Accepted initial prompt id, when the backend has a local inbox. */
+  readonly messageId?: string;
+  /** Whether the run owns a real same-process Agent. */
+  readonly local: boolean;
+  /** The terminal result, when this API exposes one. */
+  readonly result?: Promise<{ stopReason: string; output: readonly unknown[] }>;
+  /** Release this exact activation; never a later resume. */
+  dispose(): Promise<void>;
+}
+
+/** The provider-independent part of one child request. */
+export interface ChildSpec {
+  provider: string;
+  label: string;
+  childId: string;
+  request: { parent: any; prompt: unknown; agentOptions?: unknown };
+  signal: AbortSignal;
+}
+
+/**
+ * Start one real in-process child through whichever public subagent API the running
+ * DSH ships: `startActivation` (0.2.1-alpha.2 and later), or `start`/`startContinuable`.
+ * The returned shape is identical so every caller keeps one assertion set.
+ */
+export async function startChild(ctx: any, spec: ChildSpec, mode: 'one-shot' | 'continuable' = 'one-shot'): Promise<ChildRun> {
+  const request = {
+    parent: spec.request.parent,
+    prompt: spec.request.prompt,
+    ...(spec.request.agentOptions === undefined ? {} : { agentOptions: spec.request.agentOptions }),
+  };
+  if (typeof ctx.subagents.startActivation === 'function') {
+    let local = false;
+    const remove = ctx.on('subagent/start', (info: any) => { if (info.id === spec.childId) local = info.local === true; });
+    try {
+      const activation = await ctx.subagents.startActivation({
+        provider: spec.provider, label: spec.label, childId: spec.childId, request, signal: spec.signal, delivery: 'caller',
+      });
+      return {
+        childId: activation.childId,
+        messageId: activation.messageId,
+        local,
+        result: activation.result,
+        dispose: () => activation.dispose(),
+      };
+    } finally { remove(); }
+  }
+  if (mode === 'continuable') {
+    const run = await ctx.subagents.startContinuable({ ...spec, request });
+    return {
+      childId: run.childId,
+      messageId: run.messageId,
+      local: true,
+      dispose: async () => { if (typeof run.dispose === 'function') await run.dispose(); },
+    };
+  }
+  const run = await ctx.subagents.start(spec.provider, { ...request, label: spec.label, signal: spec.signal });
+  return { childId: run.id, local: run.localAgent !== undefined, result: run.result, dispose: () => run.dispose() };
 }
 
 /** Send one turn and wait for quiescence. */

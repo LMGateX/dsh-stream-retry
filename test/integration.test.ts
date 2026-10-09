@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  attemptChunks, createRuntime, events, llm, PARTIAL, provider, runTurn, runtimeVersion,
+  attemptChunks, createRuntime, events, llm, PARTIAL, provider, runTurn, runtimeVersion, startChild,
   type Runtime,
 } from './runtime.ts';
 
@@ -218,17 +218,21 @@ for (const kind of ['spawn', 'fork'] as const) {
         const state = runtime.registerMock(childRoute, {
           failure: new Error('Error Code upstream_stream_read_error: child adapter threw'),
         });
-        run = await runtime.ctx.subagents.start(kind, {
-          parent: parent.agent,
+        run = await startChild(runtime.ctx, {
+          provider: kind,
           label: 'Real ' + kind + ' integration child',
+          childId: kind + '-integration-child',
           signal: new AbortController().signal,
-          prompt: [{ type: 'text', text: 'CHILD_DELEGATION_PROMPT' }],
-          agentOptions: { provider: childRoute, model: 'integration-model' },
+          request: {
+            parent: parent.agent,
+            prompt: [{ type: 'text', text: 'CHILD_DELEGATION_PROMPT' }],
+            agentOptions: { provider: childRoute, model: 'integration-model' },
+          },
         });
         const result = await run.result;
         assert.equal(result.stopReason, 'completed');
         assert.deepEqual(result.output, [{ type: 'text', text: 'RECOVERED_OK' }]);
-        assert(run.localAgent, 'Provider must publish an actual same-process child Agent');
+        assert(run.local, 'Provider must publish an actual same-process child Agent');
         assert.equal(state.requests.length, 2);
         assert.equal(events(state, 'llm/retry').length, 1);
         assert.equal(events(state, 'assistant/attempt').length, 1);
@@ -256,12 +260,16 @@ test('parallel real children keep retry budget and failed partial history isolat
     const failure = { code: 'stream_timeout', message: 'stream_timeout: repeated child failure' };
     const noBudget = runtime.registerMock('child-no-budget', { failure, failures: Infinity, maxRetries: 0 });
     const twoBudget = runtime.registerMock('child-two-budget', { failure, failures: Infinity, maxRetries: 2 });
-    const start = (route: string, sessionId: string) => runtime.ctx.subagents.start('spawn', {
-      parent: parent.agent,
+    const start = (route: string, sessionId: string) => startChild(runtime.ctx, {
+      provider: 'spawn',
       label: sessionId,
+      childId: sessionId,
       signal: new AbortController().signal,
-      prompt: [{ type: 'text', text: 'child' }],
-      agentOptions: { provider: route, model: 'integration-model' },
+      request: {
+        parent: parent.agent,
+        prompt: [{ type: 'text', text: 'child' }],
+        agentOptions: { provider: route, model: 'integration-model' },
+      },
     });
     runs.push(await start('child-no-budget', 'child-no-budget-session'));
     runs.push(await start('child-two-budget', 'child-two-budget-session'));
@@ -290,7 +298,7 @@ test('real continuable child retries again after persisted settlement and public
     });
     const childId = 'continuable-real-child';
     const firstEnd = waitForSubagentEnd(runtime.ctx, childId);
-    const first = await runtime.ctx.subagents.startContinuable({
+    const first = await startChild(runtime.ctx, {
       provider: 'spawn',
       label: 'Integration continuable child',
       childId,
@@ -300,7 +308,7 @@ test('real continuable child retries again after persisted settlement and public
         prompt: [{ type: 'text', text: 'CONTINUABLE_FIRST_PROMPT' }],
         agentOptions: { provider: route, model: 'integration-model' },
       },
-    });
+    }, 'continuable');
     assert.equal(first.childId, childId);
     assert(first.messageId);
     assert.equal((await firstEnd.promise).stopReason, 'completed');
