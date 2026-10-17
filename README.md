@@ -1,6 +1,6 @@
 # DSH Stream Retry — 可配置流中断重试兼容插件
 
-为 **DSH 0.2.0-rc.2、0.2.1-alpha.1 与 0.2.1-alpha.2** 的官方重试执行器补充上游错误分类。插件本身不启动第二套重试循环，不发“继续”消息，也不重建 agent。复用官方 dsh-llm-retry，在同一 turn / step 重试失败的模型请求。
+为 **DSH 0.2.0-rc.2、0.2.1-alpha.1、0.2.1-alpha.2 与 0.2.1-rc.2** 的官方重试执行器补充上游错误分类。插件本身不启动第二套重试循环，不发“继续”消息，也不重建 agent。复用官方 dsh-llm-retry，在同一 turn / step 重试失败的模型请求。
 
 ## 默认预设与可编辑设置
 
@@ -35,11 +35,11 @@
 
 ## 安装与配置
 
-这是 Host + Web client 的普通 bundle；[manifest](<package.json>) 声明 [组合 patch](<cordis.patch.yml>)，只挂载一个全局分类器。需要现有组合已启用官方 dsh-llm-retry（标准 base bundle 已声明它），且目标 provider 的 retryPolicy 允许 TRANSPORT。不要重复挂载另一个官方执行器。
+这是 Host + Web client 的普通 bundle；[manifest](<package.json>) 声明 [组合 patch](<cordis.patch.yml>)，只挂载一个全局分类器。`engines.dsh` 声明 `>=0.2.0-rc.2 <0.3.0`，DSH 0.2.1-rc.2 的启动与安装检查会优先使用该范围，不再逐个检查 DSH peer。需要现有组合已启用官方 dsh-llm-retry（标准 base bundle 已声明它），且目标 provider 的 retryPolicy 允许 TRANSPORT。不要重复挂载另一个官方执行器。
 
 从 GitHub Release 安装（推荐，唯一经过验证的分发方式）：
 
-    dsh plugin --profile web add https://github.com/LMGateX/dsh-stream-retry/releases/download/v0.1.5/dsh-stream-retry-0.1.5.tgz
+    dsh plugin --profile web add https://github.com/LMGateX/dsh-stream-retry/releases/download/v0.1.6/dsh-stream-retry-0.1.6.tgz
 
 或者克隆仓库后按目录安装：
 
@@ -114,26 +114,27 @@ errorCodes 是完整列表，不是增量。重试次数、退避、是否重试
 
 未设置 DSH_RUNTIME_ROOT 且无法解析到已安装的 DSH 时，集成测试会给出明确错误，而不是猜测本机路径。
 
-兼容性不靠版本号猜测：本机安装的 **0.2.0-rc.2** 与隔离安装的 **0.2.1-alpha.1**、**0.2.1-alpha.2** 都跑通了同一套
-34 项真实 runtime 集成测试，覆盖 llm/stream 瀑布、agent/request-error、agent loop、官方 dsh-llm-retry
-与真实子 agent 服务。0.2.1-alpha.2 把子 agent 公开入口从 start/startContinuable 改为
-startActivation/sendMessage，测试在同一套断言下自动适配两种 API，插件本身没有用到这条接缝。客户端半只用公开的
-plugins.row.config 槽位、configForms.get/whileServed/mutate 与平台 React；不导入任何 Harness Client 包，
-因此不随客户端内部重构而失效。
+兼容性不靠版本号猜测：本机安装的 **0.2.0-rc.2** 与隔离安装的 **0.2.1-alpha.1**、**0.2.1-alpha.2**、
+**0.2.1-rc.2** 都跑通了同一套真实 runtime 集成测试（rc.2 本轮为 35 项，新增 manifest 兼容性检查），覆盖 llm/stream 瀑布、agent/request-error、agent loop、
+官方 dsh-llm-retry 与真实子 agent 服务。0.2.1-alpha.2 把子 agent 公开入口从 start/startContinuable 改为
+startActivation/sendMessage，测试在同一套断言下自动适配两种 API，插件本身没有用到这条接缝。0.2.1-rc.2 保持
+llm/stream 瀑布与 plugins.row.config / configForms 两条接缝不变，只移除了配置快照的 memory 模式字段，
+本插件没有读取该字段。客户端半只用公开的 plugins.row.config 槽位、configForms.get/whileServed/mutate 与平台 React；
+不导入任何 Harness Client 包，因此不随客户端内部重构而失效。
 
 测试文件（同样为 TypeScript，由 Node 24 直接运行）：
 
 - [test/plugin.test.ts](<test/plugin.test.ts>)：预设、字面边界、永久码、配置列表、取消、字段保留、卸载。
 - [test/client.test.ts](<test/client.test.ts>)：原子保存、revision 冲突、草稿、重置、卸载及两个可访问编辑器；用公共契约模拟，不依赖内部实现。
-- [test/integration.test.ts](<test/integration.test.ts>) + [test/runtime.ts](<test/runtime.ts>)：挂载真实 Cordis/core/本产品/官方 retry，注入离线 mock adapter，不调用真实模型 API。验证 same-step 重试、partial 隔离、UNKNOWN/STREAM_CLOSED 实际 adapter throw、预算耗尽、事件驱动取消及 in-process 子 agent。持久测试只使用测试自建临时 JSONL，清理路径有 ownership 校验，不修改现有用户会话。
+- [test/integration.test.ts](<test/integration.test.ts>) + [test/runtime.ts](<test/runtime.ts>)：挂载真实 Cordis/core/本产品/官方 retry，注入离线 mock adapter，不调用真实模型 API。验证 manifest 的 engines.dsh 覆盖当前 runtime、same-step 重试、partial 隔离、UNKNOWN/STREAM_CLOSED 实际 adapter throw、预算耗尽、事件驱动取消及 in-process 子 agent。持久测试只使用测试自建临时 JSONL，清理路径有 ownership 校验，不修改现有用户会话。
 
-本机执行 \`npm run test:unit\` 与三个 runtime 的 \`npm run test:integration\`：**128/128 通过**（单元与配置页 26、rc.2 集成 34、alpha.1 集成 34、alpha.2 集成 34），测试使用 1ms 退避以快速确定性验证，不改变生产退避；另用 60s 官方退避验证事件触发取消。
+本轮在 0.2.1-rc.2 上执行 \`npm run test:unit\` 与 \`npm run test:integration\`：**61/61 通过**（单元与配置页 26、rc.2 集成 35）。合并此前 0.2.0-rc.2、alpha.1、alpha.2 的 34 项结果，完整矩阵为 **163/163**；测试使用 1ms 退避以快速确定性验证，不改变生产退避；另用 60s 官方退避验证事件触发取消。
 
-**验证限制：配置页已在真实无头 Chromium 中打开（alpha.1 与 alpha.2 各一次），确认渲染出两个字段、默认值与保存按钮且控制台零报错；其余浏览器交互与视觉效果仍需人工确认；没有真实上游网络故障的端到端复现。** 临时离线 persistence 测试不等于崩溃后的自动恢复。
+**验证限制：配置页已在真实无头 Chromium 中打开（alpha.1、alpha.2 与 0.2.1-rc.2 各一次）。rc.2 上还实际编辑并保存了 provider 列表，刷新后确认持久化，再恢复继承值并确认回到默认值；全过程控制台零报错。其余浏览器交互与视觉效果仍需人工确认；没有真实上游网络故障的端到端复现。** 临时离线 persistence 测试不等于崩溃后的自动恢复。
 
 ## 官方接口依据
 
 - [插件 Config](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/config.md)
 - [官方重试插件](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm-retry/README.md)
 
-当前实现以 0.2.0-rc.2、0.2.1-alpha.1 与 0.2.1-alpha.2 的公开声明和运行测试为准；master 的接口可能变化，升级前应重新验证。许可证：[MIT](<LICENSE>)。
+当前实现以 0.2.0-rc.2、0.2.1-alpha.1、0.2.1-alpha.2 与 0.2.1-rc.2 的公开声明和运行测试为准；master 的接口可能变化，升级前应重新验证。许可证：[MIT](<LICENSE>)。

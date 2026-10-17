@@ -1,6 +1,6 @@
 {
   "name": "dsh-stream-retry",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Configurable stream error classification for DSH built-in request retry",
   "repository": {
     "type": "git",
@@ -39,7 +39,8 @@
     "src"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "dsh": ">=0.2.0-rc.2 <0.3.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.backend.json && tsc -p tsconfig.client.json",

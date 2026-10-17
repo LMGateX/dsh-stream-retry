@@ -4,9 +4,10 @@
  * call is served by the offline mock adapter from runtime.ts.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
-  attemptChunks, createRuntime, events, llm, PARTIAL, provider, runTurn, runtimeVersion, startChild,
+  attemptChunks, createRuntime, events, llm, load, PARTIAL, provider, runTurn, runtimeVersion, startChild,
   type Runtime,
 } from './runtime.ts';
 
@@ -53,6 +54,14 @@ async function faultCase(
     return state;
   } finally { await runtime.dispose(); }
 }
+
+test('package manifest declares the installed DSH version compatible', async (t) => {
+  const appBoot = await load<any>('dsh-app-boot');
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const issue = appBoot.evaluatePluginCompatibility(manifest, {}, runtimeVersion);
+  assert.equal(issue, undefined, issue === undefined ? '' : JSON.stringify(issue));
+  t.diagnostic('Manifest accepts DSH ' + runtimeVersion);
+});
 
 test('main agent retries the failed request in the same step with clean history', { timeout: 10000 }, async (t) => {
   // Never print the resolved local path: test logs are often published.
