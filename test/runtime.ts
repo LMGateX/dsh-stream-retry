@@ -57,6 +57,14 @@ export const loadOptional = async <T = Record<string, unknown>>(name: string): P
   try { return await load<T>(name); } catch { return undefined; }
 };
 
+/**
+ * Select the plugin a package exports. DSH ships some packages as a default export
+ * and others as named exports (`{ name, apply, Config }`), and that split has moved
+ * between releases, so accept either shape without pinning a version.
+ */
+const pluginOf = (module: any): any =>
+  (typeof module.default === 'function' || typeof module.default?.apply === 'function' ? module.default : module);
+
 // Fail closed: no test path may contact a real provider.
 globalThis.fetch = (async () => { throw new Error('Integration tests forbid network fetch'); }) as typeof fetch;
 
@@ -210,10 +218,10 @@ export async function createRuntime({ config = {}, product = true, retry = true,
     if (persistent) {
       temporaryRoot = await mkdtemp(join(resolve(tmpdir()), 'dsh-stream-retry-test-'));
       const persistence = await load<any>('dsh-session-persistence-jsonl');
-      await ctx.plugin(persistence.default, { root: temporaryRoot }).await();
+      await ctx.plugin(pluginOf(persistence), { root: temporaryRoot }).await();
       // Real query backend with exact reads enabled; no SQLite import/index needed.
       const query = await load<any>('dsh-session-query-sqlite');
-      await ctx.plugin(query.default, { path: ':memory:', openAt: 'never' }).await();
+      await ctx.plugin(pluginOf(query), { path: ':memory:', openAt: 'never' }).await();
     }
     if (subagents) {
       // 0.2.1-alpha.2 resolves every child through the Session working directory, so
