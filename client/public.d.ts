@@ -34,6 +34,17 @@ export interface ConfigForm {
     subscribe(listener: () => void): () => void;
     mutate(ops: readonly PathOperation[], expectedRevision?: number): Promise<boolean>;
 }
+/**
+ * Page-owned view of one configuration form, as DSH 0.2.2 and later pass it to
+ * `plugins.row.config` entries. The page owns subscriptions and re-renders; the
+ * contribution only reads the current snapshot and submits mutations.
+ */
+export interface ConfigPageForm {
+    /** Accepted Host values for this page's entry. */
+    readonly state: ConfigFormSnapshot;
+    /** Submit all field edits with the revision the editor read. */
+    readonly mutate: ConfigForm['mutate'];
+}
 /** Minimal read of the settings service this bundle consumes. */
 export interface ConfigFormsService {
     get<T = unknown>(entryId: string): ConfigForm;
@@ -58,6 +69,6 @@ export interface ClientContext {
 export interface ReactRuntime {
     createElement(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): unknown;
     useState<T>(initial: () => T): [T, (value: T) => void];
-    useEffect(effect: () => (() => void) | void, deps: readonly unknown[]): void;
+    useEffect(effect: () => (() => void) | void, deps?: readonly unknown[]): void;
     useSyncExternalStore<T>(subscribe: (listener: () => void) => () => void, getSnapshot: () => T, getServerSnapshot?: () => T): T;
 }

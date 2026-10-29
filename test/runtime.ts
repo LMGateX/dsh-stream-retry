@@ -215,6 +215,10 @@ export async function createRuntime({ config = {}, product = true, retry = true,
   }
   try {
     for (const module of core) await ctx.plugin(module.default).await();
+    // 0.2.2-alpha.2 splits tool execution into per-scope executor plugins; without one
+    // the agent loop refuses to run. Earlier releases execute tools inside dsh-tools.
+    const nativeExecutor = await loadOptional<any>('dsh-tool-executor-native');
+    if (nativeExecutor) await ctx.plugin(nativeExecutor).await();
     if (persistent) {
       temporaryRoot = await mkdtemp(join(resolve(tmpdir()), 'dsh-stream-retry-test-'));
       const persistence = await load<any>('dsh-session-persistence-jsonl');

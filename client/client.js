@@ -185,6 +185,34 @@ window.__ModuleLoader__.load({
                 },
             };
         }
+        /**
+         * Adapt the page-owned form DSH 0.2.2 and later pass to slot entries into the
+         * stable form the editor reads. `update` absorbs the page's latest snapshot;
+         * the page owns its own subscriptions and re-renders on every Host change.
+         * @param handle - current page form props.
+         * @returns the adapter, with `update` for the next page render.
+         */
+        function createPageForm(handle) {
+            let snapshot = handle.state;
+            let mutate = handle.mutate;
+            const listeners = new Set();
+            return {
+                getSnapshot: () => snapshot,
+                subscribe(listener) {
+                    listeners.add(listener);
+                    return () => listeners.delete(listener);
+                },
+                mutate: (operations, revision) => mutate(operations, revision),
+                update(next) {
+                    mutate = next.mutate;
+                    if (next.state === snapshot)
+                        return;
+                    snapshot = next.state;
+                    for (const listener of listeners)
+                        listener();
+                },
+            };
+        }
         const styles = {
             root: { display: 'grid', gap: 16, color: 'var(--dsw-alias-label-primary)', fontSize: 13 },
             field: { display: 'grid', gap: 7 },
@@ -214,9 +242,8 @@ window.__ModuleLoader__.load({
         function apply(ctx) {
             const form = ctx.configForms.get(ROW_ID);
             const h = React.createElement;
-            function EditorView({ configForm }) {
-                const [instance] = React.useState(() => createEditor(configForm));
-                React.useEffect(() => instance.start(), [instance]);
+            /** Render one editor instance; the wrapper decides how the form is sourced. */
+            function EditorScreen({ instance }) {
                 const state = React.useSyncExternalStore(instance.subscribe, instance.getSnapshot, instance.getSnapshot);
                 if (state.status !== 'ready') {
                     return h('p', { style: styles.hint, role: 'status' }, state.status === 'loading'
@@ -248,8 +275,30 @@ window.__ModuleLoader__.load({
                     disabled, onClick: () => instance.reset(),
                 }, '恢复继承值（保存后生效）')));
             }
+            /** DSH <= 0.2.1: the slot supplies the shared ConfigForm directly. */
+            function LegacyEditor({ configForm }) {
+                const [instance] = React.useState(() => createEditor(configForm));
+                React.useEffect(() => instance.start(), [instance]);
+                return h(EditorScreen, { instance });
+            }
+            /** DSH >= 0.2.2: the page owns the form and passes a snapshot plus mutate. */
+            function PageEditor({ form: pageForm }) {
+                const [adapter] = React.useState(() => createPageForm(pageForm));
+                React.useEffect(() => { adapter.update(pageForm); }, [adapter, pageForm]);
+                const [instance] = React.useState(() => createEditor(adapter));
+                React.useEffect(() => instance.start(), [instance]);
+                return h(EditorScreen, { instance });
+            }
             function ConfigView(props) {
-                return props.view === 'summary' ? summary : h(EditorView, { configForm: props.configForm });
+                if (props.view === 'summary')
+                    return summary;
+                const pageForm = props.form;
+                if (pageForm !== undefined)
+                    return h(PageEditor, { form: pageForm });
+                const configForm = props.configForm;
+                return configForm === undefined
+                    ? h('p', { style: styles.hint, role: 'status' }, '此插件当前未提供可编辑配置。')
+                    : h(LegacyEditor, { configForm });
             }
             ctx.effect(() => ctx.configForms.whileServed([ROW_ID], () => ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
                 name: 'plugins.row.config',
@@ -264,6 +313,7 @@ window.__ModuleLoader__.load({
         exported.inject = inject;
         exported.apply = apply;
         exported.createEditor = createEditor;
+        exported.createPageForm = createPageForm;
         exported.parseList = parseList;
         exported.summary = summary;
         return exported;

@@ -221,12 +221,20 @@ for (const kind of ['spawn', 'fork'] as const) {
       const runtime = await createRuntime({ subagents: true });
       let run: any;
       try {
-        const parent = await runtime.createAgent({ sessionId: kind + '-parent', route: kind + '-parent-route', adapter: { failures: 0 } });
-        await runTurn(parent, 'PARENT_CONTEXT_INHERITANCE_SENTINEL');
-        const childRoute = kind + '-child-route';
-        const state = runtime.registerMock(childRoute, {
-          failure: new Error('Error Code upstream_stream_read_error: child adapter threw'),
+        const failure = new Error('Error Code upstream_stream_read_error: child adapter threw');
+        // A seeded fork keeps the parent's recorded model selection on 0.2.2+, so
+        // its child runs on the inherited route; a spawn honors its own route.
+        const parent = await runtime.createAgent({
+          sessionId: kind + '-parent',
+          route: kind + '-parent-route',
+          adapter: kind === 'fork' ? { failure, failures: [2] } : { failures: 0 },
         });
+        await runTurn(parent, 'PARENT_CONTEXT_INHERITANCE_SENTINEL');
+        const parentRetries = events(parent.state, 'llm/retry').length;
+        const childRoute = kind + '-child-route';
+        const state = kind === 'fork'
+          ? parent.state
+          : runtime.registerMock(childRoute, { failure });
         run = await startChild(runtime.ctx, {
           provider: kind,
           label: 'Real ' + kind + ' integration child',
@@ -235,25 +243,27 @@ for (const kind of ['spawn', 'fork'] as const) {
           request: {
             parent: parent.agent,
             prompt: [{ type: 'text', text: 'CHILD_DELEGATION_PROMPT' }],
-            agentOptions: { provider: childRoute, model: 'integration-model' },
+            ...(kind === 'spawn' ? { agentOptions: { provider: childRoute, model: 'integration-model' } } : {}),
           },
         });
         const result = await run.result;
         assert.equal(result.stopReason, 'completed');
         assert.deepEqual(result.output, [{ type: 'text', text: 'RECOVERED_OK' }]);
         assert(run.local, 'Provider must publish an actual same-process child Agent');
-        assert.equal(state.requests.length, 2);
+        // A fork's parent turn occupies request 0; the child then fails and retries.
+        const offset = kind === 'fork' ? 1 : 0;
+        assert.equal(state.requests.length, offset + 2);
         assert.equal(events(state, 'llm/retry').length, 1);
         assert.equal(events(state, 'assistant/attempt').length, 1);
-        assert.equal(events(state, 'step/start').length, 1);
-        assert.deepEqual(state.requests[1]!.messages, state.requests[0]!.messages);
+        assert.equal(events(state, 'step/start').length, kind === 'fork' ? 2 : 1);
+        assert.deepEqual(state.requests[offset + 1]!.messages, state.requests[offset]!.messages);
         assert.equal(
-          JSON.stringify(state.requests[0]!.messages).includes('PARENT_CONTEXT_INHERITANCE_SENTINEL'),
+          JSON.stringify(state.requests[offset]!.messages).includes('PARENT_CONTEXT_INHERITANCE_SENTINEL'),
           kind === 'fork',
         );
         assert(!JSON.stringify(state.requests).includes(PARTIAL));
         assert.equal(attemptChunks(events(state, 'assistant/attempt')[0]).at(-1).reason.failure.code, 'TRANSPORT');
-        assert.equal(events(parent.state, 'llm/retry').length, 0);
+        assert.equal(parentRetries, 0, 'The parent turn itself never retried');
       } finally {
         if (run) await run.dispose();
         await runtime.dispose();

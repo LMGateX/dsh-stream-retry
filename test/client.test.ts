@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import type { ConfigForm, ConfigFormSnapshot, PathOperation } from '../client/public.js';
+import type { ConfigForm, ConfigFormSnapshot, ConfigPageForm, PathOperation } from '../client/public.js';
 
 /** Minimal module-loader facade: capture the single registered factory. */
 interface LoadedClient {
@@ -21,6 +21,7 @@ type ClientApi = {
   parseList(text: string): string[];
   summary: string;
   createEditor(form: ConfigForm): Editor;
+  createPageForm(form: ConfigPageForm): ConfigForm & { update(next: ConfigPageForm): void };
 };
 type Editor = {
   getSnapshot(): EditorState;
@@ -275,6 +276,36 @@ test('unmount cleanup removes the subscription and ignores late settlement', asy
   assert.equal(editor.getSnapshot().saving, true);
 });
 
+test('0.2.2 page-owned form adapter follows snapshots and forwards mutations', async () => {
+  const { api } = load();
+  const first = mockForm().form.getSnapshot();
+  const second = { ...first, revision: 5 } as ConfigFormSnapshot;
+  const calls: { tag: string; operations: readonly PathOperation[]; revision?: number }[] = [];
+  const firstMutate = async (operations: readonly PathOperation[], revision?: number) => {
+    calls.push({ tag: 'first', operations: plain(operations), ...(revision === undefined ? {} : { revision }) });
+    return true;
+  };
+  const secondMutate = async (operations: readonly PathOperation[], revision?: number) => {
+    calls.push({ tag: 'second', operations: plain(operations), ...(revision === undefined ? {} : { revision }) });
+    return false;
+  };
+  const adapter = api.createPageForm({ state: first, mutate: firstMutate });
+  let notifications = 0;
+  const stop = adapter.subscribe(() => { notifications += 1; });
+  assert.equal(adapter.getSnapshot(), first);
+  adapter.update({ state: first, mutate: secondMutate });
+  assert.equal(notifications, 0, 'An identical snapshot is not a change');
+  adapter.update({ state: second, mutate: secondMutate });
+  assert.equal(adapter.getSnapshot(), second);
+  assert.equal(notifications, 1);
+  const operations = [{ op: 'set', path: ['providers'], value: [] }] as const;
+  assert.equal(await adapter.mutate(operations, 9), false);
+  assert.deepEqual(plain(calls), [{ tag: 'second', operations: plain(operations), revision: 9 }]);
+  stop();
+  adapter.update({ state: { ...second, revision: 6 }, mutate: firstMutate });
+  assert.equal(notifications, 1, 'Unsubscribed listeners stop receiving updates');
+});
+
 test('React page renders exactly the two accessible list editors', () => {
   const nodes: { type: string; props: Record<string, unknown> }[] = [];
   const react = {
@@ -314,5 +345,44 @@ test('React page renders exactly the two accessible list editors', () => {
     assert.equal(node.props.disabled, false);
     assert.equal(typeof node.props['aria-describedby'], 'string');
   }
+  assert.equal(nodes.filter((node) => node.type === 'label').length, 2);
+});
+
+test('React page renders the 0.2.2 page-owned form props', () => {
+  const nodes: { type: string; props: Record<string, unknown> }[] = [];
+  const react = {
+    createElement(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): unknown {
+      const merged = { ...(props ?? {}), children: children.length === 1 ? children[0] : children };
+      if (typeof type === 'function') return (type as (p: Record<string, unknown>) => unknown)(merged);
+      const node = { type: String(type), props: merged };
+      nodes.push(node);
+      return node;
+    },
+    useState<T>(initial: () => T) { return [initial(), () => {}] as [T, (value: T) => void]; },
+    useEffect() {},
+    useSyncExternalStore<T>(_: unknown, getSnapshot: () => T) { return getSnapshot(); },
+  };
+  const { api } = load(react);
+  const { form } = mockForm();
+  const captured: { component?: (props: Record<string, unknown>) => unknown } = {};
+  const ctx = {
+    configForms: {
+      get: () => form,
+      whileServed: (_ids: readonly string[], register: (served: ReadonlySet<string>) => () => void) => register(new Set(['stream-retry'])),
+    },
+    slots: {
+      inject: (_name: string, register: () => () => void) => register(),
+      register: (_spec: unknown, component: (props: Record<string, unknown>) => unknown) => { captured.component = component; return () => {}; },
+    },
+    effect: (make: () => (() => void) | void) => { make(); },
+  };
+  api.apply(ctx);
+  const snapshot = form.getSnapshot();
+  captured.component!({ view: 'page', form: { state: snapshot, mutate: form.mutate } });
+  const textareas = nodes.filter((node) => node.type === 'textarea');
+  assert.equal(textareas.length, 2);
+  assert.deepEqual(textareas.map((node) => node.props.id), ['dsh-stream-retry-errorCodes', 'dsh-stream-retry-providers']);
+  assert.equal(textareas[0]!.props.value, 'upstream_stream_read_error\nstream_timeout\nstream error');
+  assert.equal(textareas[1]!.props.value, '');
   assert.equal(nodes.filter((node) => node.type === 'label').length, 2);
 });
