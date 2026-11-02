@@ -166,6 +166,75 @@ test('text, successful finishes, aborted finishes and canceled requests pass thr
   assert.equal((await runStream([input], {}, { provider: 'test-provider', signal: AbortSignal.abort() })).output[0], input);
 });
 
+test('a completed response with no visible content is reclassified as EMPTY_RESPONSE', async () => {
+  const reasoning = { type: 'reasoning-delta', index: 0, text: '**Waiting for the source lane**' };
+  const emptyText = { type: 'text-delta', index: 1, text: '' };
+  const stop = { type: 'finish', reason: { kind: 'stop' }, replayState: { opaque: 'replay' } };
+  const { output, logs } = await runStream([reasoning, emptyText, stop]);
+  assert.equal(output.length, 3, 'every chunk is forwarded exactly once');
+  assert.deepEqual(output[2]!.reason, {
+    kind: 'error',
+    failure: {
+      code: 'EMPTY_RESPONSE',
+      message: 'provider returned a completed response with no visible content',
+    },
+  });
+  assert.deepEqual(output[2]!.replayState, { opaque: 'replay' });
+  assert.match(String(logs[0]?.join(' ')), /EMPTY_RESPONSE/);
+  assert(!JSON.stringify(logs).includes('Waiting for the source lane'));
+});
+
+test('visible text, tool calls and non-text artifacts keep a completed response', async () => {
+  const streams: Chunk[][] = [
+    [{ type: 'text-delta', index: 0, text: 'answer' }],
+    [{ type: 'block-end', index: 0, block: { type: 'text', text: 'answer' } }],
+    [{ type: 'tool-call-delta', index: 0, id: 'call', name: 'run_code', argumentsDelta: '{}' }],
+    [{ type: 'block-start', index: 0, blockType: 'tool-call' }],
+    [{ type: 'block-end', index: 0, block: { type: 'tool-call', id: 'call' } }],
+    [{ type: 'block-end', index: 0, block: { type: 'image', data: 'x' } }],
+  ];
+  for (const chunks of streams) {
+    const stream = [...chunks, { type: 'finish', reason: { kind: 'stop' } }];
+    assert.deepEqual((await runStream(stream)).output, stream);
+  }
+});
+
+test('whitespace-only text does not count as visible', async () => {
+  const stream = [
+    { type: 'text-delta', index: 0, text: ' \n\t ' },
+    { type: 'block-end', index: 0, block: { type: 'text', text: '   ' } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ];
+  const { output } = await runStream(stream);
+  assert.equal(output.at(-1)!.reason.kind, 'error');
+  assert.equal(output.at(-1)!.reason.failure.code, 'EMPTY_RESPONSE');
+});
+
+test('the empty-response rule respects its flag, the provider filter and cancellation', async () => {
+  const empty = (): Chunk[] => [{ type: 'reasoning-delta', index: 0, text: 'thinking' }, { type: 'finish', reason: { kind: 'stop' } }];
+  assert.deepEqual((await runStream(empty(), { retryEmptyResponse: false })).output, empty());
+  assert.deepEqual((await runStream(empty(), { providers: ['other'] })).output, empty());
+  const aborted = await runStream(empty(), {}, { provider: 'test-provider', signal: AbortSignal.abort() });
+  assert.deepEqual(aborted.output, empty());
+  const allowed = await runStream(empty(), { providers: ['test-provider'] });
+  assert.equal(allowed.output.at(-1)!.reason.failure.code, 'EMPTY_RESPONSE');
+});
+
+test('the empty-response flag is reread for each completion', async () => {
+  let enabled = true;
+  const { handler } = install({ providers: { get: () => [] }, retryEmptyResponse: { get: () => enabled } });
+  const collect = async (): Promise<Chunk> => {
+    const items: Chunk[] = [];
+    for await (const item of handler({ provider: 'test' }, async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    })) items.push(item);
+    return items[0]!;
+  };
+  assert.equal((await collect()).reason.failure.code, 'EMPTY_RESPONSE');
+  enabled = false;
+  assert.equal((await collect()).reason.kind, 'stop');
+});
+
 test('upstream middleware exceptions propagate unchanged', async () => {
   const { handler } = install();
   const primary = new Error('plugin failed');

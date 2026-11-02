@@ -1,5 +1,5 @@
 /**
- * Browser half of dsh-stream-retry: a configuration page for the two settings the
+ * Browser half of dsh-stream-retry: a configuration page for the settings the
  * classifier reads. It registers into the public `plugins.row.config` slot and uses
  * only the public settings service; no Harness Client package is imported.
  *

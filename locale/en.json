@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Stream interruption retry",
-    "description": "Classify configured upstream stream errors for DSH built-in retry, including in-process child agents."
+    "description": "Classify configured upstream stream errors and empty completions for DSH built-in retry, including in-process child agents."
   }
 }

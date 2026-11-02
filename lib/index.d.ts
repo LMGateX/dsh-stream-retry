@@ -18,6 +18,8 @@ export interface Config {
     errorCodes: Volatile<readonly string[]> | readonly string[];
     /** Provider routes to act on; empty means every route in this process. */
     providers: Volatile<readonly string[]> | readonly string[];
+    /** Reclassify a completed response with no visible content as EMPTY_RESPONSE. */
+    retryEmptyResponse: Volatile<boolean> | boolean;
 }
 /**
  * Live plugin configuration. Arrays are volatile so a saved settings change applies
@@ -26,9 +28,11 @@ export interface Config {
 export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     errorCodes: Schema<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     providers: Schema<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    retryEmptyResponse: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     errorCodes: Schema<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     providers: Schema<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    retryEmptyResponse: Schema<boolean, boolean, "volatile-defined">;
 }>>, "plain">;
 /** Correct only terminal failure classification; the official retry plugin recovers. */
 export declare function apply(ctx: Context, config: Config): void;

@@ -1,6 +1,6 @@
 "use strict";
 /**
- * Browser half of dsh-stream-retry: a configuration page for the two settings the
+ * Browser half of dsh-stream-retry: a configuration page for the settings the
  * classifier reads. It registers into the public `plugins.row.config` slot and uses
  * only the public settings service; no Harness Client package is imported.
  *
@@ -15,7 +15,9 @@ window.__ModuleLoader__.load({
     factory(require) {
         const React = require('react');
         /** Field names in display order; `unset` operations use the same names. */
-        const FIELDS = ['errorCodes', 'providers'];
+        const FIELDS = ['errorCodes', 'providers', 'retryEmptyResponse'];
+        /** List fields are edited as one identifier per line. */
+        const LIST_FIELDS = new Set(['errorCodes', 'providers']);
         /** Loader row id declared by this bundle's patch. */
         const ROW_ID = 'stream-retry';
         /** The bundle id the shell registers; must match the npm package name. */
@@ -31,6 +33,10 @@ window.__ModuleLoader__.load({
         function formatList(value) {
             return Array.isArray(value) ? value.join('\n') : '';
         }
+        /** Read a boolean field; an unset value means the inherited default (on). */
+        function formatFlag(value) {
+            return value !== false;
+        }
         /** Read one owned field out of an accepted section value. */
         function sectionField(value, field) {
             return value?.[field];
@@ -43,6 +49,7 @@ window.__ModuleLoader__.load({
                 revision: snapshot.revision,
                 errorCodes: formatList(sectionField(snapshot.value, 'errorCodes')),
                 providers: formatList(sectionField(snapshot.value, 'providers')),
+                retryEmptyResponse: formatFlag(sectionField(snapshot.value, 'retryEmptyResponse')),
                 dirty: false,
                 saving: false,
                 error: '',
@@ -112,13 +119,15 @@ window.__ModuleLoader__.load({
                         unsubscribe = undefined;
                     };
                 },
-                /** Stage one field's text. */
-                edit(field, text) {
+                /** Stage one field's value; list fields take text, the flag takes a boolean. */
+                edit(field, value) {
                     if (!FIELDS.includes(field) || !canEdit())
+                        return;
+                    if (typeof value !== (LIST_FIELDS.has(field) ? 'string' : 'boolean'))
                         return;
                     begin();
                     resets.delete(field);
-                    publish({ ...state, [field]: text, dirty: true, error: '' });
+                    publish({ ...state, [field]: value, dirty: true, error: '' });
                 },
                 /** Stage clearing both fields back to their inherited values. */
                 reset() {
@@ -131,6 +140,7 @@ window.__ModuleLoader__.load({
                         ...state,
                         errorCodes: formatList(sectionField(base, 'errorCodes')),
                         providers: formatList(sectionField(base, 'providers')),
+                        retryEmptyResponse: formatFlag(sectionField(base, 'retryEmptyResponse')),
                         dirty: true,
                         error: '',
                     });
@@ -152,9 +162,13 @@ window.__ModuleLoader__.load({
                         publish({ ...state, conflict: true, error: '配置已在其他页面更新。草稿已保留；请先放弃草稿并重新读取，再编辑保存。' });
                         return false;
                     }
-                    const operations = FIELDS.map((field) => (resets.has(field)
-                        ? { op: 'unset', path: [field] }
-                        : { op: 'set', path: [field], value: parseList(state[field]) }));
+                    const operations = FIELDS.map((field) => {
+                        if (resets.has(field))
+                            return { op: 'unset', path: [field] };
+                        return LIST_FIELDS.has(field)
+                            ? { op: 'set', path: [field], value: parseList(state[field]) }
+                            : { op: 'set', path: [field], value: state.retryEmptyResponse };
+                    });
                     publish({ ...state, saving: true, error: '' });
                     try {
                         const ok = await form.mutate(operations, baseline);
@@ -232,7 +246,7 @@ window.__ModuleLoader__.load({
             error: { margin: 0, color: 'var(--dsw-alias-label-error)', lineHeight: 1.6 },
         };
         /** Short description shown on the plugin card while no editor is open. */
-        const summary = '为流错误分类兼容层维护标识与 provider 路由；重试仍由 DSH 官方插件执行。';
+        const summary = '维护上游错误标识、provider 路由与空回复重试；重试仍由 DSH 官方插件执行。';
         /** Service list Cordis activates before this bundle runs. */
         const inject = ['slots', 'configForms'];
         /**
@@ -259,12 +273,20 @@ window.__ModuleLoader__.load({
                         onChange: (event) => instance.edit(view, event.target.value),
                     }), h('p', { id: id + '-hint', style: styles.hint }, hint));
                 }
+                function flag(view, label, hint) {
+                    const id = 'dsh-stream-retry-' + view;
+                    return h('div', { key: view, style: styles.field }, h('label', { htmlFor: id }, h('input', {
+                        id, type: 'checkbox', checked: state.retryEmptyResponse, disabled,
+                        'aria-describedby': id + '-hint',
+                        onChange: (event) => instance.edit(view, Boolean(event.target.checked)),
+                    }), ' ', label), h('p', { id: id + '-hint', style: styles.hint }, hint));
+                }
                 return h('form', {
                     style: styles.root,
                     'aria-label': '流错误分类兼容层设置',
                     'aria-busy': state.saving,
                     onSubmit: (event) => { event.preventDefault(); void instance.save(); },
-                }, !state.writable && h('p', { style: styles.hint, role: 'status' }, '当前连接或配置文档为只读。'), field('errorCodes', '错误标识', '每行一个，按外层错误标识精确且区分大小写匹配；空白行忽略。清空并保存即禁用此兼容层。stream error 是整个字面标识，不是正文中包含该短语就重试。每列表最多 100 项，每项最多 200 字符；不得包含首尾空白、冒号、引号、反引号或控制字符。', 5), field('providers', 'Provider 路由', '每行一个 provider 路由名称，精确且区分大小写匹配；列表为空表示所有路由。每列表最多 100 项，每项最多 200 字符，不得包含空白。此处不填写 API 地址或凭证。', 3), state.conflict && !state.error && h('p', { role: 'alert', style: styles.error }, '配置已更新；为避免覆盖他人的修改，请放弃草稿后重新编辑。'), state.error && h('p', { role: 'alert', style: styles.error }, state.error), h('div', { style: styles.actions }, h('button', {
+                }, !state.writable && h('p', { style: styles.hint, role: 'status' }, '当前连接或配置文档为只读。'), field('errorCodes', '错误标识', '每行一个，按外层错误标识精确且区分大小写匹配；空白行忽略。清空并保存即禁用此兼容层。stream error 是整个字面标识，不是正文中包含该短语就重试。每列表最多 100 项，每项最多 200 字符；不得包含首尾空白、冒号、引号、反引号或控制字符。', 5), field('providers', 'Provider 路由', '每行一个 provider 路由名称，精确且区分大小写匹配；列表为空表示所有路由。每列表最多 100 项，每项最多 200 字符，不得包含空白。此处不填写 API 地址或凭证。', 3), flag('retryEmptyResponse', '空回复重试', '模型正常结束但没有任何可见文本或工具调用（只有思考或空白）时，改判为 EMPTY_RESPONSE，交给 DSH 官方重试。工具调用、图片和已取消的请求不受影响。'), state.conflict && !state.error && h('p', { role: 'alert', style: styles.error }, '配置已更新；为避免覆盖他人的修改，请放弃草稿后重新编辑。'), state.error && h('p', { role: 'alert', style: styles.error }, state.error), h('div', { style: styles.actions }, h('button', {
                     type: 'submit', style: styles.button,
                     disabled: disabled || !state.dirty || state.conflict,
                 }, state.saving ? '正在保存…' : '保存'), h('button', {

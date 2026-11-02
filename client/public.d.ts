@@ -6,7 +6,7 @@
  * @module dsh-stream-retry/client-types
  */
 /** Field names this plugin owns inside its settings namespace. */
-export type FieldName = 'errorCodes' | 'providers';
+export type FieldName = 'errorCodes' | 'providers' | 'retryEmptyResponse';
 /** Snapshot of one settings namespace. */
 export interface ConfigFormSnapshot {
     /** \`loading\` until the first accepted section, \`ready\` while one stands. */

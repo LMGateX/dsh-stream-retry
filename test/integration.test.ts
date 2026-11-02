@@ -155,6 +155,42 @@ for (const code of ['TIMEOUT', 'TRANSPORT', 'RATE_LIMIT', 'SERVER', 'EMPTY_RESPO
   });
 }
 
+test('an empty completed response is retried as EMPTY_RESPONSE and recovers in the same step', { timeout: 10000 }, async () => {
+  const runtime = await createRuntime();
+  try {
+    const handle = await runtime.createAgent({
+      sessionId: 'empty-response',
+      adapter: { failures: 0, emptyFirst: true },
+    });
+    const state = await runTurn(handle);
+    assert.equal(state.requests.length, 2);
+    assert.deepEqual(state.requests[1]!.messages, state.requests[0]!.messages);
+    const retries = events(state, 'llm/retry');
+    assert.equal(retries.length, 1);
+    assert.equal(retries[0]!.data.failure.code, 'EMPTY_RESPONSE');
+    assert.equal(events(state, 'llm/retry-started').length, 1);
+    assert.equal(events(state, 'turn/end').at(-1).data.reason.kind, 'completed');
+    const attempt = events(state, 'assistant/attempt')[0];
+    assert.equal(attemptChunks(attempt).at(-1).reason.failure.code, 'EMPTY_RESPONSE');
+    assert(!JSON.stringify(handle.agent.session.deriveMessages()).includes('EMPTY_RESPONSE'));
+  } finally { await runtime.dispose(); }
+});
+
+test('the empty-response rule is inert when its setting is off', { timeout: 10000 }, async () => {
+  const runtime = await createRuntime({ config: { retryEmptyResponse: false } });
+  try {
+    const handle = await runtime.createAgent({
+      sessionId: 'empty-response-off',
+      adapter: { failures: 0, emptyFirst: true },
+    });
+    const state = await runTurn(handle);
+    assert.equal(state.requests.length, 1);
+    assert.equal(events(state, 'llm/retry').length, 0);
+    assert.equal(events(state, 'turn/end').at(-1).data.reason.kind, 'completed');
+    assert.equal(events(state, 'assistant/attempt').length, 0);
+  } finally { await runtime.dispose(); }
+});
+
 test('product does not own a retry loop: without official retry there is no redispatch', { timeout: 10000 }, async () => {
   await faultCase({ code: 'stream_timeout', message: 'stream_timeout' }, { retry: false, expectRetry: false });
 });

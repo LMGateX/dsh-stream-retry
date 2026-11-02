@@ -11,6 +11,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-llm';
 import { findErrorCode, type FailureFact } from './matcher.js';
 import type { Volatile } from './types.js';
+import { chunkIsVisible } from './visibility.js';
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'stream-retry';
@@ -24,17 +25,21 @@ export interface Config {
   errorCodes: Volatile<readonly string[]> | readonly string[];
   /** Provider routes to act on; empty means every route in this process. */
   providers: Volatile<readonly string[]> | readonly string[];
+  /** Reclassify a completed response with no visible content as EMPTY_RESPONSE. */
+  retryEmptyResponse: Volatile<boolean> | boolean;
 }
 
 const identifier = Schema.string()
   .min(1)
   .max(200)
-  .pattern(/^[^:\s"'\u0060\u0000-\u001f\u007f](?:[^:"'\u0060\u0000-\u001f\u007f]*[^:\s"'\u0060\u0000-\u001f\u007f])?$/u);
+  .pattern(/^[^:\s"'`\u0000-\u001f\u007f](?:[^:"'`\u0000-\u001f\u007f]*[^:\s"'`\u0000-\u001f\u007f])?$/u);
 const provider = Schema.string().min(1).max(200).pattern(/^\S+$/u);
 
 /** Read a live configuration reference without caching its snapshot. */
-const readLive = (field: Volatile<readonly string[]> | readonly string[]): readonly string[] =>
-  (field as Volatile<readonly string[]>).get();
+function readLive<T>(field: Volatile<T> | T): T {
+  const read = (field as Volatile<T> | undefined)?.get;
+  return typeof read === 'function' ? (read.call(field) as T) : (field as T);
+}
 
 /**
  * Live plugin configuration. Arrays are volatile so a saved settings change applies
@@ -51,6 +56,10 @@ export const Config = Schema.object({
     .description('生效的 provider 路由，精确匹配。空列表表示所有同进程 provider；不支持通配符。')
     .default([])
     .volatile(),
+  retryEmptyResponse: Schema.boolean()
+    .description('模型正常结束但没有任何可见内容（只有思考或空白文本、没有工具调用）时，改判为 EMPTY_RESPONSE，交给 DSH 官方重试。')
+    .default(true)
+    .volatile(),
 });
 
 /** Correct only terminal failure classification; the official retry plugin recovers. */
@@ -58,13 +67,39 @@ export function apply(ctx: Context, config: Config): void {
   let active = true;
   ctx.effect(() => () => { active = false; }, 'stream-retry: stop captured classifiers');
   ctx.on('llm/stream', async function* (options, next) {
+    // Visible content is a property of the whole stream, so the tracker spans
+    // chunks; it is one boolean and never buffers or joins text.
+    let visible = false;
     for await (const chunk of next()) {
-      if (!active || chunk.type !== 'finish' || chunk.reason.kind !== 'error' || options.signal?.aborted) {
+      if (!visible && chunkIsVisible(chunk)) visible = true;
+      if (!active || options.signal?.aborted || chunk.type !== 'finish') {
         yield chunk;
         continue;
       }
       const providers = readLive(config.providers);
       if (providers.length > 0 && !providers.includes(options.provider)) {
+        yield chunk;
+        continue;
+      }
+      if (chunk.reason.kind === 'stop') {
+        if (visible || readLive(config.retryEmptyResponse) === false) {
+          yield chunk;
+          continue;
+        }
+        ctx.logger.info('stream-retry: provider=%s empty completion classified=EMPTY_RESPONSE', options.provider);
+        yield {
+          ...chunk,
+          reason: {
+            kind: 'error',
+            failure: {
+              code: 'EMPTY_RESPONSE',
+              message: 'provider returned a completed response with no visible content',
+            },
+          },
+        };
+        continue;
+      }
+      if (chunk.reason.kind !== 'error') {
         yield chunk;
         continue;
       }

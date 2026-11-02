@@ -27,14 +27,14 @@ type Editor = {
   getSnapshot(): EditorState;
   subscribe(listener: () => void): () => void;
   start(): () => void;
-  edit(field: string, text: string): void;
+  edit(field: string, value: string | boolean): void;
   reset(): void;
   discard(): void;
   save(): Promise<boolean>;
 };
 type EditorState = {
   status: string; writable: boolean; revision: number | undefined;
-  errorCodes: string; providers: string;
+  errorCodes: string; providers: string; retryEmptyResponse: boolean;
   dirty: boolean; saving: boolean; error: string; conflict: boolean;
 };
 
@@ -159,7 +159,7 @@ test('registers the exact Configure slot key through public services and release
   assert.equal(disposed, 1);
 });
 
-test('stages locally and saves both fields atomically with the baseline revision', async () => {
+test('stages locally and saves every field atomically with the baseline revision', async () => {
   const { mock, editor, stop } = started();
   editor.edit('errorCodes', 'stream error\ncustom');
   editor.edit('providers', 'route-a\nroute-b');
@@ -170,6 +170,7 @@ test('stages locally and saves both fields atomically with the baseline revision
     operations: [
       { op: 'set', path: ['errorCodes'], value: ['stream error', 'custom'] },
       { op: 'set', path: ['providers'], value: ['route-a', 'route-b'] },
+      { op: 'set', path: ['retryEmptyResponse'], value: true },
     ],
   });
   assert.equal((mock.form.getSnapshot().value as Record<string, unknown>).untouched, 'keep');
@@ -193,6 +194,19 @@ test('reset stages inherited values and saves unset operations', async () => {
   assert.deepEqual(plain(mock.calls[0]!.operations), [
     { op: 'unset', path: ['errorCodes'] },
     { op: 'unset', path: ['providers'] },
+    { op: 'unset', path: ['retryEmptyResponse'] },
+  ]);
+});
+
+test('saves the empty-response rule as one boolean operation', async () => {
+  const { mock, editor } = started();
+  editor.edit('retryEmptyResponse', false);
+  assert.equal(editor.getSnapshot().retryEmptyResponse, false);
+  assert.equal(await editor.save(), true);
+  assert.deepEqual(plain(mock.calls[0]!.operations), [
+    { op: 'set', path: ['errorCodes'], value: ['upstream_stream_read_error', 'stream_timeout', 'stream error'] },
+    { op: 'set', path: ['providers'], value: [] },
+    { op: 'set', path: ['retryEmptyResponse'], value: false },
   ]);
 });
 
@@ -204,6 +218,7 @@ test('editing after reset sets that field while the other stays unset', async ()
   assert.deepEqual(plain(mock.calls[0]!.operations), [
     { op: 'unset', path: ['errorCodes'] },
     { op: 'set', path: ['providers'], value: ['route-a'] },
+    { op: 'unset', path: ['retryEmptyResponse'] },
   ]);
 });
 
@@ -306,7 +321,7 @@ test('0.2.2 page-owned form adapter follows snapshots and forwards mutations', a
   assert.equal(notifications, 1, 'Unsubscribed listeners stop receiving updates');
 });
 
-test('React page renders exactly the two accessible list editors', () => {
+test('React page renders the two accessible list editors and the empty-response toggle', () => {
   const nodes: { type: string; props: Record<string, unknown> }[] = [];
   const react = {
     // A minimal renderer: element types that are functions really render here, and
@@ -345,7 +360,14 @@ test('React page renders exactly the two accessible list editors', () => {
     assert.equal(node.props.disabled, false);
     assert.equal(typeof node.props['aria-describedby'], 'string');
   }
-  assert.equal(nodes.filter((node) => node.type === 'label').length, 2);
+  const checkboxes = nodes.filter((node) => node.type === 'input');
+  assert.equal(checkboxes.length, 1);
+  assert.equal(checkboxes[0]!.props.id, 'dsh-stream-retry-retryEmptyResponse');
+  assert.equal(checkboxes[0]!.props.type, 'checkbox');
+  assert.equal(checkboxes[0]!.props.checked, true);
+  assert.equal(checkboxes[0]!.props.disabled, false);
+  assert.equal(typeof checkboxes[0]!.props['aria-describedby'], 'string');
+  assert.equal(nodes.filter((node) => node.type === 'label').length, 3);
 });
 
 test('React page renders the 0.2.2 page-owned form props', () => {
@@ -384,5 +406,8 @@ test('React page renders the 0.2.2 page-owned form props', () => {
   assert.deepEqual(textareas.map((node) => node.props.id), ['dsh-stream-retry-errorCodes', 'dsh-stream-retry-providers']);
   assert.equal(textareas[0]!.props.value, 'upstream_stream_read_error\nstream_timeout\nstream error');
   assert.equal(textareas[1]!.props.value, '');
-  assert.equal(nodes.filter((node) => node.type === 'label').length, 2);
+  const checkboxes = nodes.filter((node) => node.type === 'input');
+  assert.equal(checkboxes.length, 1);
+  assert.equal(checkboxes[0]!.props.checked, true);
+  assert.equal(nodes.filter((node) => node.type === 'label').length, 3);
 });

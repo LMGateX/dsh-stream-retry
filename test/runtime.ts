@@ -101,6 +101,8 @@ interface MockAdapterOptions {
   maxRetries?: number;
   delayMs?: number;
   tool?: string;
+  /** Emit a completed response with reasoning and no visible content on attempt 1. */
+  emptyFirst?: boolean;
 }
 
 export class MockAdapter extends llm.LlmAdapter {
@@ -109,14 +111,16 @@ export class MockAdapter extends llm.LlmAdapter {
   failures: number | number[];
   tool: string | undefined;
   toolEmitted = false;
+  emptyFirst: boolean;
   policy: unknown;
 
-  constructor(state: AdapterState, { failure, failures = 1, maxRetries = 2, delayMs = 1, tool }: MockAdapterOptions = {}) {
+  constructor(state: AdapterState, { failure, failures = 1, maxRetries = 2, delayMs = 1, tool, emptyFirst = false }: MockAdapterOptions = {}) {
     super();
     this.state = state;
     this.failure = failure;
     this.failures = failures;
     this.tool = tool;
+    this.emptyFirst = emptyFirst;
     this.policy = llm.resolveRetryPolicy({
       mode: 'normal',
       maxRetries,
@@ -140,6 +144,16 @@ export class MockAdapter extends llm.LlmAdapter {
       yield { type: 'text-delta', index: 0, text: PARTIAL };
       if (this.failure instanceof Error) throw this.failure;
       yield { type: 'finish', reason: { kind: 'error', failure: this.failure } };
+      return;
+    }
+    if (this.emptyFirst && attempt === 1) {
+      // A completed response with reasoning and an empty text block: no tool call,
+      // nothing a user or the loop can act on.
+      yield { type: 'reasoning-delta', index: 0, text: '**Waiting for the source lane**' };
+      yield { type: 'block-start', index: 1, blockType: 'text' };
+      yield { type: 'text-delta', index: 1, text: '' };
+      yield { type: 'block-end', index: 1, block: { type: 'text', text: '' } };
+      yield { type: 'finish', reason: { kind: 'stop' } };
       return;
     }
     if (this.tool !== undefined && !this.toolEmitted) {

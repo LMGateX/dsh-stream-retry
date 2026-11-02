@@ -8,8 +8,22 @@
 |---|---|---|
 | errorCodes | upstream_stream_read_error、stream_timeout、stream error | 完整错误标识列表，可增删。自定义数组**替换**默认列表；空数组关闭本插件的映射。 |
 | providers | 空数组 | 对所有同进程 provider 生效；非空时只匹配列出的精确路由。不是 API URL，不支持通配符。 |
+| retryEmptyResponse | 开（true） | 正常结束但没有任何可见内容（只有思考或空白文本、没有工具调用）的回复，改判为 EMPTY_RESPONSE，交给官方重试。 |
 
 配置界面逐行维护列表，内部空格保留：**stream error 是一个完整标识**，不会拆成两个词。区分大小写，不自动把 stream_error、stream  error、stream error extra 当成 stream error。
+
+### 空回复重试（EMPTY_RESPONSE）
+
+模型偶尔会“正常结束”却什么都没说：流里只有 reasoning，最后跟一个空的 text 块，没有任何工具调用。适配器把它当普通 stop，agent loop 于是静默结束回合，agent 空闲——界面上就剩最后一段思考。
+
+打开 `retryEmptyResponse`（默认开）后，本插件在 finish 时判定这条流是否产生过**可见内容**：
+
+- 可见（不改写）：非空白 text-delta、非空白 text 块、任何 tool-call、以及 image/file 等非文本产物；
+- 不可见（改写）：只有 reasoning-delta、空白文本、空的 text/thinking 块。
+
+不可见且请求未被取消时，把 `finish(stop)` 改写为 `error / EMPTY_RESPONSE`，由官方 dsh-llm-retry 在同一 turn / step 重试（默认最多 5 次，500ms–10s 指数退避）。重试仍失败时回合以可见错误结束，而不是静默空闲。
+
+这条规则只改变“正常结束但零可见输出”的分类：工具调用、图片、被取消的请求、以及已有的错误码分类都不受影响；关闭该开关即恢复旧行为。
 
 每个列表最多 100 项，每项最多 200 字符。错误标识不得包含首尾空白、冒号、引号、反引号或控制字符；provider 不得含空白。只填写 code，不填写冒号后的错误描述，不填写凭证。
 
@@ -41,7 +55,7 @@
 
 从 GitHub Release 安装（推荐，唯一经过验证的分发方式）：
 
-    dsh plugin --profile web add https://github.com/LMGateX/dsh-stream-retry/releases/download/v0.1.7/dsh-stream-retry-0.1.7.tgz
+    dsh plugin --profile web add https://github.com/LMGateX/dsh-stream-retry/releases/download/v0.1.8/dsh-stream-retry-0.1.8.tgz
 
 或者克隆仓库后按目录安装：
 
@@ -54,9 +68,9 @@ npm registry 发布尚未完成：`npm publish` 需要 2FA 一次性验证码，
 
     dsh plugin --profile web add dsh-stream-retry
 
-安装后，在插件管理器进入本 bundle，找到 stream-retry 行的“配置 / Configure”入口，可编辑两个逐行列表。页面使用公开 plugins.row.config 和 configForms；只有 Host 服务已提供可编辑配置时才出现。没有另起 Web 服务器。
+安装后，在插件管理器进入本 bundle，找到 stream-retry 行的“配置 / Configure”入口，可编辑两个逐行列表和空回复开关。页面使用公开 plugins.row.config 和 configForms；只有 Host 服务已提供可编辑配置时才出现。没有另起 Web 服务器。
 
-- **保存**：一次原子提交两个字段，携带开始编辑时的 revision；只修改这两字段，不覆盖未知设置。
+- **保存**：一次原子提交三个字段，携带开始编辑时的 revision；只修改这三个字段，不覆盖未知设置。
 - **放弃草稿**：重新读取当前已接受值。
 - **恢复继承值**：暂存清除用户覆盖的操作，按“保存”后才生效。
 - 远端已更新、只读、校验失败或连接异常时不会偷偷覆盖数据；保存被拒绝会保留草稿。
@@ -104,7 +118,7 @@ errorCodes 是完整列表，不是增量。重试次数、退避、是否重试
     npm install --ignore-scripts
     npm run check          # tsc --noEmit：源码、测试、客户端一起类型检查
     npm run build          # 生成 lib/ 与 client/ 的运行产物
-    npm run test:unit      # 后端行为 + 配置页协议（28 项，无需 DSH 运行时）
+    npm run test:unit      # 后端行为 + 配置页协议（34 项，无需 DSH 运行时）
 
 集成测试需要一份已安装的 DSH，并显式指定它的位置；包内没有任何硬编码机器路径：
 
@@ -129,11 +143,11 @@ plugins.row.config 槽位、configForms.get/whileServed/mutate 与平台 React�
 
 测试文件（同样为 TypeScript，由 Node 24 直接运行）：
 
-- [test/plugin.test.ts](<test/plugin.test.ts>)：预设、字面边界、永久码、配置列表、取消、字段保留、卸载。
-- [test/client.test.ts](<test/client.test.ts>)：原子保存、revision 冲突、草稿、重置、卸载、新旧两种配置页 props 及两个可访问编辑器；用公共契约模拟，不依赖内部实现。
+- [test/plugin.test.ts](<test/plugin.test.ts>)：预设、字面边界、永久码、配置列表、取消、字段保留、卸载、空回复可见性判定。
+- [test/client.test.ts](<test/client.test.ts>)：原子保存、revision 冲突、草稿、重置、卸载、新旧两种配置页 props 及两个列表编辑器与空回复开关；用公共契约模拟，不依赖内部实现。
 - [test/integration.test.ts](<test/integration.test.ts>) + [test/runtime.ts](<test/runtime.ts>)：挂载真实 Cordis/core/本产品/官方 retry，注入离线 mock adapter，不调用真实模型 API。验证 manifest 的 engines.dsh 覆盖当前 runtime、same-step 重试、partial 隔离、UNKNOWN/STREAM_CLOSED 实际 adapter throw、预算耗尽、事件驱动取消及 in-process 子 agent。持久测试只使用测试自建临时 JSONL，清理路径有 ownership 校验，不修改现有用户会话。
 
-本轮在 0.2.2-alpha.2 上执行 \`npm run test:unit\` 与 \`npm run test:integration\`：**63/63 通过**（单元与配置页 28、0.2.2-alpha.2 集成 35）；同一套集成测试在已安装的 0.2.1-rc.3 上也 **35/35** 回归通过。此前 0.2.0-rc.2、alpha.1、alpha.2 与 0.2.1-rc.2 的矩阵保持 **163/163**；测试使用 1ms 退避以快速确定性验证，不改变生产退避；另用 60s 官方退避验证事件触发取消。
+本轮在 0.2.2-alpha.2 上执行 \`npm run test:unit\` 与 \`npm run test:integration\`：**71/71 通过**（单元与配置页 34、0.2.2-alpha.2 集成 37）；同一套集成测试在已安装的 0.2.1-rc.3 上也 **35/35** 回归通过。此前 0.2.0-rc.2、alpha.1、alpha.2 与 0.2.1-rc.2 的矩阵保持 **163/163**；测试使用 1ms 退避以快速确定性验证，不改变生产退避；另用 60s 官方退避验证事件触发取消。
 
 **验证限制：配置页已在真实无头 Chromium 中打开（alpha.1、alpha.2、0.2.1-rc.2 与 0.2.2-alpha.2 各一次）。0.2.2-alpha.2 上还使用隔离 profile 实际编辑并保存了 errorCodes 与 provider 列表，刷新后确认持久化，再恢复继承值并确认回到默认值；全过程控制台零报错。其余浏览器交互与视觉效果仍需人工确认；没有真实上游网络故障的端到端复现。** 临时离线 persistence 测试不等于崩溃后的自动恢复。
 
